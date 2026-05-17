@@ -1,0 +1,118 @@
+{
+  "name": "cursor-quota-tracker",
+  "displayName": "Cursor Quota Tracker",
+  "description": "Real-time Cursor AI usage quota monitoring in the status bar with rich tooltips, alerts, and usage prediction",
+  "version": "0.1.0",
+  "publisher": "cursor-quota",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shenhua97/cursor-quota-tracker"
+  },
+  "homepage": "https://github.com/shenhua97/cursor-quota-tracker#readme",
+  "bugs": {
+    "url": "https://github.com/shenhua97/cursor-quota-tracker/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Cursor Quota Tracker",
+      "properties": {
+        "cursorQuota.autoDetectToken": {
+          "type": "boolean",
+          "default": true,
+          "description": "自动从 Cursor 本地数据库检测认证 Token / Auto-detect token from Cursor local database"
+        },
+        "cursorQuota.refreshInterval": {
+          "type": "number",
+          "default": 300,
+          "minimum": 60,
+          "description": "自动刷新间隔（秒），最小 60 / Auto-refresh interval in seconds (min 60)"
+        },
+        "cursorQuota.language": {
+          "type": "string",
+          "enum": ["zh", "en"],
+          "default": "zh",
+          "description": "界面语言 / UI Language",
+          "enumDescriptions": ["中文", "English"]
+        },
+        "cursorQuota.statusBarAlignment": {
+          "type": "string",
+          "enum": ["left", "right"],
+          "default": "right",
+          "description": "状态栏位置 / Status bar position",
+          "enumDescriptions": ["左侧 / Left", "右侧 / Right"]
+        },
+        "cursorQuota.statusBarPriority": {
+          "type": "number",
+          "default": 100,
+          "description": "状态栏优先级（数值越大越靠前）/ Status bar priority"
+        },
+        "cursorQuota.warningThreshold": {
+          "type": "number",
+          "default": 80,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "用量预警阈值百分比 (0-100) / Warning threshold percentage"
+        },
+        "cursorQuota.enableBlinkAlert": {
+          "type": "boolean",
+          "default": true,
+          "description": "低余量时背景色闪烁 / Blink status bar background on low quota"
+        },
+        "cursorQuota.enablePopupAlert": {
+          "type": "boolean",
+          "default": true,
+          "description": "低余量时弹窗提醒 / Show warning popup on low quota"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "cursorQuota.refresh",
+        "title": "Cursor Quota: 立即刷新 / Refresh Now"
+      },
+      {
+        "command": "cursorQuota.openDashboard",
+        "title": "Cursor Quota: 打开用量面板 / Open Dashboard"
+      },
+      {
+        "command": "cursorQuota.openSettings",
+        "title": "Cursor Quota: 打开设置 / Open Settings"
+      },
+      {
+        "command": "cursorQuota.showWeeklyReport",
+        "title": "Cursor Quota: 周用量报告 / Weekly Report"
+      },
+      {
+        "command": "cursorQuota.setToken",
+        "title": "Cursor Quota: 手动输入 Token / Set Token Manually"
+      },
+      {
+        "command": "cursorQuota.clearToken",
+        "title": "Cursor Quota: 清除 Token / Clear Token"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "package": "vsce package --no-dependencies",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
