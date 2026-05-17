@@ -21,10 +21,10 @@
 
 ## 安装
 
-下载 `.vsix` 文件后执行：
+从 [Releases](https://github.com/shenhua97/cursor-quota-tracker/releases) 页面下载最新的 `.vsix` 文件，然后执行：
 
 ```bash
-cursor --install-extension cursor-quota-tracker-0.1.0.vsix
+cursor --install-extension cursor-quota-tracker-x.x.x.vsix
 ```
 
 或在 Cursor 中：扩展面板 → `...` → 从 VSIX 安装。

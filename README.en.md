@@ -21,10 +21,10 @@ Real-time Cursor AI usage quota monitoring in the editor status bar. Zero config
 
 ## Installation
 
-Download the `.vsix` file, then run:
+Download the latest `.vsix` file from [Releases](https://github.com/shenhua97/cursor-quota-tracker/releases), then run:
 
 ```bash
-cursor --install-extension cursor-quota-tracker-0.1.0.vsix
+cursor --install-extension cursor-quota-tracker-x.x.x.vsix
 ```
 
 Or in Cursor: Extensions panel → `...` → Install from VSIX.
