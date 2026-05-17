@@ -113,7 +113,7 @@ export class TooltipBuilder {
   }
 
   private appendModelSection(md: vscode.MarkdownString, model: ModelState): void {
-    let modelLine = `$(gear) **${t('model')}**: ${model.modelName}`;
+    let modelLine = `$(gear) **${t('model')}**: ${model.displayName}`;
     if (model.costLabel) {
       modelLine += `  |  ${model.costLabel}`;
     }

@@ -2,7 +2,7 @@
   "name": "cursor-quota-tracker",
   "displayName": "Cursor Quota Tracker",
   "description": "Real-time Cursor AI usage quota monitoring in the status bar with rich tooltips, alerts, and usage prediction",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "cursor-quota",
   "license": "MIT",
   "repository": {

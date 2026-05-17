@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 
-type SqlJsDatabase = { exec: (sql: string) => Array<{ values: unknown[][] }>; close: () => void };
+type SqlJsDatabase = { exec: (sql: string, params?: unknown[]) => Array<{ values: unknown[][] }>; close: () => void };
 type SqlJsStatic = { Database: new (data: ArrayLike<number>) => SqlJsDatabase };
 type InitSqlJs = (config: { locateFile: (file: string) => string }) => Promise<SqlJsStatic>;
 
@@ -21,19 +21,114 @@ export class DbReader {
   private output: vscode.OutputChannel;
   private sqlite3Path: string | null = null;
   private sqlite3Checked = false;
-  private cachedDb: CachedDb | null = null;
+  private cachedMemDb: CachedDb | null = null;
+  private nativeModule: NativeSqlite3 | null | undefined = undefined;
 
   constructor(extensionPath: string, output: vscode.OutputChannel) {
     this.extensionPath = extensionPath;
     this.output = output;
   }
 
-  async queryViaSqlJs(dbPath: string, key: string): Promise<string | null> {
+  async queryLocal(dbPath: string, key: string): Promise<string | null> {
+    const nativeResult = await this.queryViaNative(dbPath, key);
+    if (nativeResult !== null) return nativeResult;
+    return this.queryViaMemBuffer(dbPath, key);
+  }
+
+  private async queryViaNative(dbPath: string, key: string): Promise<string | null> {
+    const mod = this.getNativeModule();
+    if (!mod) return null;
+
+    return new Promise((resolve) => {
+      let db: NativeDatabase | null = null;
+      try {
+        db = new mod.Database(dbPath, mod.OPEN_READONLY);
+        db.get(
+          `SELECT value FROM ItemTable WHERE key = ?`,
+          [key],
+          (err: Error | null, row: { value: string } | undefined) => {
+            try { db?.close(); } catch { /* ignore */ }
+            if (err || !row) {
+              if (err) this.output.appendLine(`[DbReader] native query error: ${err.message}`);
+              resolve(null);
+            } else {
+              resolve(row.value);
+            }
+          },
+        );
+      } catch (err) {
+        try { db?.close(); } catch { /* ignore */ }
+        this.output.appendLine(`[DbReader] native open error: ${err}`);
+        resolve(null);
+      }
+    });
+  }
+
+  private getNativeModule(): NativeSqlite3 | null {
+    if (this.nativeModule !== undefined) return this.nativeModule;
+
+    const candidates = this.getNativeModulePaths();
+    for (const p of candidates) {
+      try {
+        if (!fs.existsSync(p)) continue;
+        const mod = require(p);
+        if (mod?.Database) {
+          this.nativeModule = mod;
+          this.output.appendLine(`[DbReader] Native sqlite3 loaded: ${p}`);
+          return mod;
+        }
+      } catch (err) {
+        this.output.appendLine(`[DbReader] Failed to load native module ${p}: ${err}`);
+      }
+    }
+
+    this.nativeModule = null;
+    this.output.appendLine('[DbReader] No native sqlite3 found, using sql.js fallback');
+    return null;
+  }
+
+  private getNativeModulePaths(): string[] {
+    const paths: string[] = [];
+
+    if (process.platform === 'win32') {
+      // Find Cursor installation via the cursor CLI in PATH
+      try {
+        const cursorBin = execFileSync('where', ['cursor'], { encoding: 'utf8', timeout: 3000, windowsHide: true })
+          .trim().split(/\r?\n/)[0];
+        if (cursorBin) {
+          const cursorRoot = path.resolve(path.dirname(cursorBin), '..', '..');
+          paths.push(path.join(cursorRoot, 'node_modules', '@vscode', 'sqlite3'));
+        }
+      } catch { /* cursor not in PATH */ }
+
+      // Common Windows install locations
+      const locals = [process.env.LOCALAPPDATA, 'C:\\Program Files', 'D:\\cursor'];
+      for (const base of locals) {
+        if (!base) continue;
+        paths.push(path.join(base, 'Programs', 'cursor', 'resources', 'app', 'node_modules', '@vscode', 'sqlite3'));
+        paths.push(path.join(base, 'cursor', 'resources', 'app', 'node_modules', '@vscode', 'sqlite3'));
+        paths.push(path.join(base, 'resources', 'app', 'node_modules', '@vscode', 'sqlite3'));
+      }
+    } else {
+      // macOS / Linux
+      const appPaths = process.platform === 'darwin'
+        ? ['/Applications/Cursor.app/Contents/Resources/app']
+        : ['/usr/share/cursor/resources/app', '/opt/cursor/resources/app'];
+      for (const app of appPaths) {
+        paths.push(path.join(app, 'node_modules', '@vscode', 'sqlite3'));
+      }
+    }
+
+    return paths;
+  }
+
+  private async queryViaMemBuffer(dbPath: string, key: string): Promise<string | null> {
     try {
-      const db = await this.getOrRefreshDb(dbPath);
+      const db = await this.getOrRefreshMemDb(dbPath);
       if (!db) return null;
       const result = db.exec(
-        `SELECT value FROM ItemTable WHERE key = '${key.replace(/'/g, "''")}'`,
+        `SELECT value FROM ItemTable WHERE key = ?`,
+        [key],
       );
       if (result.length > 0 && result[0].values.length > 0) {
         return String(result[0].values[0][0]);
@@ -41,22 +136,22 @@ export class DbReader {
       return null;
     } catch (err) {
       this.invalidateCache();
-      this.output.appendLine(`[DbReader] sql.js query error for key "${key}": ${err}`);
+      this.output.appendLine(`[DbReader] sql.js mem query error: ${err}`);
       return null;
     }
   }
 
-  private async getOrRefreshDb(dbPath: string): Promise<SqlJsDatabase | null> {
+  private async getOrRefreshMemDb(dbPath: string): Promise<SqlJsDatabase | null> {
     try {
       const stat = fs.statSync(dbPath);
-      if (this.cachedDb && this.cachedDb.path === dbPath && this.cachedDb.mtimeMs === stat.mtimeMs) {
-        return this.cachedDb.db;
+      if (this.cachedMemDb && this.cachedMemDb.path === dbPath && this.cachedMemDb.mtimeMs === stat.mtimeMs) {
+        return this.cachedMemDb.db;
       }
       this.invalidateCache();
       const sqljs = await this.getSqlJs();
       const fileBuffer = fs.readFileSync(dbPath);
       const db = new sqljs.Database(fileBuffer);
-      this.cachedDb = { db, mtimeMs: stat.mtimeMs, path: dbPath };
+      this.cachedMemDb = { db, mtimeMs: stat.mtimeMs, path: dbPath };
       return db;
     } catch (err) {
       this.output.appendLine(`[DbReader] Failed to open DB: ${err}`);
@@ -64,10 +159,10 @@ export class DbReader {
     }
   }
 
-  private invalidateCache(): void {
-    if (this.cachedDb) {
-      try { this.cachedDb.db.close(); } catch { /* ignore */ }
-      this.cachedDb = null;
+  invalidateCache(): void {
+    if (this.cachedMemDb) {
+      try { this.cachedMemDb.db.close(); } catch { /* ignore */ }
+      this.cachedMemDb = null;
     }
   }
 
@@ -97,9 +192,9 @@ export class DbReader {
     if (preferCli) {
       const cliResult = await this.queryViaCli(dbPath, key);
       if (cliResult !== null) return cliResult;
-      return this.queryViaSqlJs(dbPath, key);
+      return this.queryLocal(dbPath, key);
     }
-    const jsResult = await this.queryViaSqlJs(dbPath, key);
+    const jsResult = await this.queryLocal(dbPath, key);
     if (jsResult !== null) return jsResult;
     return this.queryViaCli(dbPath, key);
   }
@@ -129,19 +224,18 @@ export class DbReader {
     if (process.platform === 'darwin' || process.platform === 'linux') {
       candidates.push('/usr/bin/sqlite3');
     }
-    // sqlite3 in PATH works on all platforms
     candidates.push('sqlite3');
 
     for (const candidate of candidates) {
       const ok = await this.testSqlite3(candidate);
       if (ok) {
         this.sqlite3Path = candidate;
-        this.output.appendLine(`[DbReader] Found sqlite3: ${candidate}`);
+        this.output.appendLine(`[DbReader] Found sqlite3 CLI: ${candidate}`);
         return candidate;
       }
     }
 
-    this.output.appendLine('[DbReader] sqlite3 CLI not found, will use sql.js only');
+    this.output.appendLine('[DbReader] sqlite3 CLI not found');
     return null;
   }
 
@@ -164,4 +258,14 @@ export class DbReader {
     }
     return path.join(base, 'Cursor', 'User', 'globalStorage', 'state.vscdb');
   }
+}
+
+interface NativeSqlite3 {
+  Database: new (path: string, mode: number) => NativeDatabase;
+  OPEN_READONLY: number;
+}
+
+interface NativeDatabase {
+  get(sql: string, params: unknown[], callback: (err: Error | null, row: { value: string } | undefined) => void): void;
+  close(callback?: (err: Error | null) => void): void;
 }

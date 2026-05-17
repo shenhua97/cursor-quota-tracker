@@ -28,6 +28,7 @@ export interface ModelState {
 export interface ModelConfig {
   modelName: string;
   maxMode: boolean;
+  resolvedDisplayName?: string;
   selectedModels?: Array<{
     modelId: string;
     parameters?: Array<{ id: string; value: string }>;

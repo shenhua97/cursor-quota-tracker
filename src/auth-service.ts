@@ -125,13 +125,13 @@ export class AuthService {
       return null;
     }
 
-    const token = await this.dbReader.queryViaSqlJs(dbPath, DB_KEYS.ACCESS_TOKEN);
+    const token = await this.dbReader.queryLocal(dbPath, DB_KEYS.ACCESS_TOKEN);
     if (token && this.isValidFormat(token)) {
-      this.output.appendLine('[Auth] Token auto-detected via sql.js');
+      this.output.appendLine('[Auth] Token auto-detected');
       return token;
     }
 
-    this.output.appendLine('[Auth] sql.js auto-detect failed, trying CLI');
+    this.output.appendLine('[Auth] Local auto-detect failed, trying CLI');
     return this.autoDetectViaCli();
   }
 

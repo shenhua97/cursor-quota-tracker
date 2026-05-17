@@ -71,7 +71,8 @@ Click status bar → Settings to modify interactively:
 | State | Display | Description |
 |-------|---------|-------------|
 | Normal | `⚡ 91/500` | Used / Total |
-| MAX Mode | `🔥 91/500 MAX` | High-cost mode warning |
+| MAX Mode | `🔥 91/500 🔥 MAX` | High-cost mode prominent warning |
+| Thinking | `🔥 91/500 💡 Think` | Thinking mode indicator |
 | On-demand | `⚠ $50/$120` | Plan exhausted, showing on-demand balance |
 | Offline | `☁ 91/500` | Network unavailable, cached data |
 | Setup | `🔑 Token Required` | Click to set up manually |
@@ -80,7 +81,8 @@ Click status bar → Settings to modify interactively:
 
 - **Auth**: Extracts accessToken from `state.vscdb`, parses JWT payload for userId to assemble Cookie, SecretStorage encrypted cache, JWT expiry detection + exponential backoff retry
 - **Data**: `cursor.com/api/usage` + `/api/usage-summary`
-- **DB Access**: sql.js WASM for SQLite reads, cached instance + mtime check to avoid reload; macOS/Linux prefer sqlite3 CLI (WAL compatible)
+- **DB Access**: Three-tier strategy — prefers Cursor's bundled `@vscode/sqlite3` native module (real-time WAL-aware), falls back to sql.js WASM in-memory, macOS/Linux also supports sqlite3 CLI
+- **Model Detection**: 5s polling of `state.vscdb` reactive storage for real-time model switch, MAX/Thinking mode changes
 - **Prediction**: Prefers daily snapshot diffs; falls back to `used / billing cycle elapsed days`
 - **Network**: 15s AbortController timeout, auto-pause polling offline + resume on window focus
 - **Build**: TypeScript + esbuild

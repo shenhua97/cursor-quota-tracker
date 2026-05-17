@@ -24,6 +24,10 @@ let focusListening = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshing = false;
 
+function getRefreshIntervalSec(): number {
+  return Math.max(60, vscode.workspace.getConfiguration('cursorQuota').get<number>('refreshInterval') ?? 300);
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   try {
     output = vscode.window.createOutputChannel('Cursor Quota Tracker');
@@ -86,8 +90,7 @@ async function initAuth(context: vscode.ExtensionContext): Promise<void> {
 function startPolling(context: vscode.ExtensionContext): void {
   if (pollTimer) clearInterval(pollTimer);
   doRefresh();
-  const sec = Math.max(60, vscode.workspace.getConfiguration('cursorQuota').get<number>('refreshInterval') ?? 300);
-  pollTimer = setInterval(() => doRefresh(), sec * 1000);
+  pollTimer = setInterval(() => doRefresh(), getRefreshIntervalSec() * 1000);
 }
 
 async function doRefresh(): Promise<void> {
@@ -151,16 +154,14 @@ function listenFocus(context: vscode.ExtensionContext): void {
 
       if (usageService.getIsOffline()) {
         doRefresh();
-        const sec = Math.max(60, vscode.workspace.getConfiguration('cursorQuota').get<number>('refreshInterval') ?? 300);
         if (!pollTimer) {
-          pollTimer = setInterval(() => doRefresh(), sec * 1000);
+          pollTimer = setInterval(() => doRefresh(), getRefreshIntervalSec() * 1000);
         }
         return;
       }
 
       const cache = usageService.getCache();
-      const sec = Math.max(60, vscode.workspace.getConfiguration('cursorQuota').get<number>('refreshInterval') ?? 300);
-      if (!cache || Date.now() - cache.lastUpdated > sec * 1000) {
+      if (!cache || Date.now() - cache.lastUpdated > getRefreshIntervalSec() * 1000) {
         doRefresh();
       }
     }),
@@ -181,8 +182,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
       alertManager.stopBlink();
 
       if (!pollTimer) {
-        const interval = Math.max(60, vscode.workspace.getConfiguration('cursorQuota').get<number>('refreshInterval') ?? 300);
-        pollTimer = setInterval(() => doRefresh(), interval * 1000);
+        pollTimer = setInterval(() => doRefresh(), getRefreshIntervalSec() * 1000);
       }
 
       await doRefresh();
@@ -358,8 +358,7 @@ function listenConfig(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration('cursorQuota.refreshInterval')) {
         if (pollTimer) {
           clearInterval(pollTimer);
-          const sec = Math.max(60, vscode.workspace.getConfiguration('cursorQuota').get<number>('refreshInterval') ?? 300);
-          pollTimer = setInterval(() => doRefresh(), sec * 1000);
+          pollTimer = setInterval(() => doRefresh(), getRefreshIntervalSec() * 1000);
         }
       }
 

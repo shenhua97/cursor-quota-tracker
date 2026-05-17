@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
+import { existsSync } from 'fs';
 import { DbReader } from './db-reader';
 import { ModelState, ModelConfig, DB_KEYS } from './types';
 
 const MODEL_SHORT_NAMES: Record<string, string> = {
+  'default': 'Auto',
   'claude-opus-4-6': 'Opus 4.6',
   'claude-opus-4-7': 'Opus 4.7',
   'claude-sonnet-4-6': 'Sonnet 4.6',
@@ -23,10 +24,6 @@ const MODEL_SHORT_NAMES: Record<string, string> = {
 
 export class ModelWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private watcher: fs.FSWatcher | null = null;
-  private watchFileActive = false;
-  private watchedTarget: string | null = null;
   private checking = false;
   private started = false;
   private dbPath: string;
@@ -48,38 +45,13 @@ export class ModelWatcher {
 
   start(): void {
     if (this.started) return;
-    if (!fs.existsSync(this.dbPath)) {
+    if (!existsSync(this.dbPath)) {
       this.output.appendLine(`[ModelWatcher] state.vscdb not found: ${this.dbPath}`);
       return;
     }
     this.started = true;
     this.checkModel();
-    this.watchDbFile();
-    this.timer = setInterval(() => this.checkModel(), 60_000);
-  }
-
-  private watchDbFile(): void {
-    const walPath = this.dbPath + '-wal';
-    const target = fs.existsSync(walPath) ? walPath : this.dbPath;
-    this.watchedTarget = target;
-
-    try {
-      this.watcher = fs.watch(target, () => this.debouncedCheck());
-      this.output.appendLine(`[ModelWatcher] Watching via fs.watch: ${target}`);
-    } catch {
-      this.output.appendLine(`[ModelWatcher] fs.watch failed, falling back to fs.watchFile`);
-      fs.watchFile(target, { interval: 1000 }, (curr, prev) => {
-        if (curr.mtimeMs !== prev.mtimeMs || curr.size !== prev.size) {
-          this.debouncedCheck();
-        }
-      });
-      this.watchFileActive = true;
-    }
-  }
-
-  private debouncedCheck(): void {
-    if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(() => this.checkModel(), 500);
+    this.timer = setInterval(() => this.checkModel(), 5_000);
   }
 
   private async checkModel(): Promise<void> {
@@ -102,26 +74,17 @@ export class ModelWatcher {
   }
 
   private async tryExtractModelConfig(): Promise<ModelConfig | null> {
-    // Strategy 1: reactive storage → aiSettings.modelConfig.composer
     const reactive = await this.dbReader.query(this.dbPath, DB_KEYS.REACTIVE_STORAGE, true);
     if (reactive) {
       try {
         const parsed = JSON.parse(reactive);
-        const storage = parsed?.storage;
-        if (storage) {
-          const composerJson = storage['aiSettings.modelConfig.composer']
-            ?? storage.aiSettings?.modelConfig?.composer;
-          if (composerJson) {
-            const mc = typeof composerJson === 'string' ? JSON.parse(composerJson) : composerJson;
-            if (mc?.modelName) return mc;
-          }
-        }
+        const mc = this.extractFromReactiveStorage(parsed);
+        if (mc) return mc;
       } catch {
         this.output.appendLine('[ModelWatcher] Failed to parse reactive storage');
       }
     }
 
-    // Strategy 2: cursor/initialModelState (some Cursor versions)
     const initialModel = await this.dbReader.query(this.dbPath, 'cursor/initialModelState', true);
     if (initialModel && initialModel !== 'applied') {
       try {
@@ -131,6 +94,46 @@ export class ModelWatcher {
     }
 
     return null;
+  }
+
+  private extractFromReactiveStorage(parsed: Record<string, unknown>): ModelConfig | null {
+    const aiSettings = parsed.aiSettings as Record<string, unknown> | undefined;
+    if (aiSettings) {
+      const modelConfig = aiSettings.modelConfig as Record<string, Record<string, unknown>> | undefined;
+      const composerMc = modelConfig?.composer;
+      if (composerMc?.modelName) {
+        const mc = composerMc as unknown as ModelConfig;
+        // When "default" (Auto mode), resolve display name from hint fields
+        if (mc.modelName === 'default') {
+          mc.resolvedDisplayName = this.resolveAutoModelName(aiSettings);
+        }
+        return mc;
+      }
+    }
+
+    // Legacy format: wrapped in parsed.storage
+    const storage = parsed.storage as Record<string, unknown> | undefined;
+    if (storage) {
+      const composerJson = storage['aiSettings.modelConfig.composer']
+        ?? (storage.aiSettings as Record<string, unknown>)?.modelConfig;
+      if (composerJson) {
+        const mc = typeof composerJson === 'string' ? JSON.parse(composerJson) : composerJson;
+        if ((mc as Record<string, unknown>)?.modelName) return mc as ModelConfig;
+        const nested = (mc as Record<string, unknown>)?.composer;
+        if (nested && (nested as Record<string, unknown>).modelName) return nested as unknown as ModelConfig;
+      }
+    }
+
+    return null;
+  }
+
+  private resolveAutoModelName(aiSettings: Record<string, unknown>): string | undefined {
+    // previousModelBeforeDefault records the last explicitly selected model
+    const prev = aiSettings.previousModelBeforeDefault as Record<string, string> | undefined;
+    if (prev?.composer) {
+      return this.shortenModelName(prev.composer);
+    }
+    return undefined;
   }
 
   private applyModelConfig(mc: ModelConfig): void {
@@ -156,9 +159,14 @@ export class ModelWatcher {
     else if (maxMode) costLabel = 'MAX';
     else if (thinking) costLabel = 'Thinking';
 
+    let displayName = this.shortenModelName(mc.modelName);
+    if (mc.modelName === 'default' && mc.resolvedDisplayName) {
+      displayName = `Auto (${mc.resolvedDisplayName})`;
+    }
+
     this.updateState({
       modelName: mc.modelName,
-      displayName: this.shortenModelName(mc.modelName),
+      displayName,
       maxMode,
       thinking,
       effort,
@@ -182,11 +190,6 @@ export class ModelWatcher {
 
   dispose(): void {
     if (this.timer) clearInterval(this.timer);
-    if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    this.watcher?.close();
-    if (this.watchFileActive && this.watchedTarget) {
-      fs.unwatchFile(this.watchedTarget);
-    }
     this._onDidChange.dispose();
   }
 }

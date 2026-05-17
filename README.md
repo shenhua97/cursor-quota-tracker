@@ -71,7 +71,8 @@ cursor --install-extension cursor-quota-tracker-x.x.x.vsix
 | 状态 | 显示 | 说明 |
 |------|------|------|
 | 正常 | `⚡ 91/500` | 已用/总量 |
-| MAX 模式 | `🔥 91/500 MAX` | 高消耗模式提醒 |
+| MAX 模式 | `🔥 91/500 🔥 MAX` | 高消耗模式醒目提醒 |
+| Thinking | `🔥 91/500 💡 Think` | 思考模式提醒 |
 | 按量计费 | `⚠ $50/$120` | 套餐用完，显示按量计费余额 |
 | 离线 | `☁ 91/500` | 网络不可用，显示缓存数据 |
 | 需配置 | `🔑 需要配置 Token` | 点击后引导手动输入 |
@@ -80,7 +81,8 @@ cursor --install-extension cursor-quota-tracker-x.x.x.vsix
 
 - **认证**: 自动从 `state.vscdb` 提取 accessToken，解析 JWT payload 获取 userId 拼装 Cookie，SecretStorage 加密缓存，JWT 过期检测 + 指数退避重试
 - **数据源**: `cursor.com/api/usage` + `/api/usage-summary`
-- **DB 读取**: sql.js WASM 读取 SQLite，缓存实例 + mtime 检查避免重复加载；macOS/Linux 优先 sqlite3 CLI（WAL 兼容）
+- **DB 读取**: 三层策略 — 优先使用 Cursor 内置 `@vscode/sqlite3` 原生模块（实时 WAL 感知），兜底 sql.js WASM 内存加载，macOS/Linux 额外支持 sqlite3 CLI
+- **模型监测**: 5 秒轮询 `state.vscdb` reactive storage，实时检测模型切换、MAX/Thinking 模式变化
 - **预测**: 优先使用逐日快照差值；快照不足时回退到 `已用量 / 计费周期已过天数`
 - **网络**: 15 秒 AbortController 超时，离线自动暂停 + 窗口聚焦恢复
 - **构建**: TypeScript + esbuild

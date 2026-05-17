@@ -108,8 +108,12 @@ export class StatusBarManager {
     }
 
     let modelText = '';
-    if (model?.costLabel) {
-      modelText = ` ${model.costLabel}`;
+    if (model?.maxMode && model?.thinking) {
+      modelText = ' $(flame) MAX+Think';
+    } else if (model?.maxMode) {
+      modelText = ' $(flame) MAX';
+    } else if (model?.thinking) {
+      modelText = ' $(light-bulb) Think';
     }
 
     this.statusBar.text = `${icon} ${usageText}${modelText}`;
