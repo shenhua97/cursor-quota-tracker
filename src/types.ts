@@ -52,6 +52,14 @@ export class FetchError extends Error {
   }
 }
 
+export enum QuotaState {
+  Normal = 'normal',
+  PlanWarning = 'planWarning',
+  RequestsDepleted = 'requestsDepleted',
+  OnDemandWarning = 'onDemandWarning',
+  FullyExhausted = 'fullyExhausted',
+}
+
 export interface UsagePrediction {
   dailyAverage: number;
   estimatedDaysLeft: number | null;

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { UsageCache } from './types';
+import { UsageCache, QuotaState } from './types';
 import { t } from './i18n';
 
 const BLINK_INTERVAL_MS = 500;
@@ -22,26 +22,48 @@ export class AlertManager {
     this.statusBar = statusBar;
   }
 
+  getQuotaState(cache: UsageCache | null): QuotaState {
+    if (!cache || cache.total <= 0) return QuotaState.Normal;
+
+    const threshold = vscode.workspace.getConfiguration('cursorQuota')
+      .get<number>('warningThreshold', 80);
+
+    if (cache.used < cache.total) {
+      const planPct = (cache.used / cache.total) * 100;
+      return planPct >= threshold ? QuotaState.PlanWarning : QuotaState.Normal;
+    }
+
+    if (cache.onDemandLimit <= 0 || cache.onDemandUsed >= cache.onDemandLimit) {
+      return QuotaState.FullyExhausted;
+    }
+
+    const odPct = (cache.onDemandUsed / cache.onDemandLimit) * 100;
+    return odPct >= threshold ? QuotaState.OnDemandWarning : QuotaState.RequestsDepleted;
+  }
+
   check(cache: UsageCache): void {
     const config = vscode.workspace.getConfiguration('cursorQuota');
-    const threshold = config.get<number>('warningThreshold', 80);
     const enableBlink = config.get<boolean>('enableBlinkAlert', true);
     const enablePopup = config.get<boolean>('enablePopupAlert', true);
 
-    if (cache.total <= 0) return;
+    const state = this.getQuotaState(cache);
 
-    const pct = (cache.used / cache.total) * 100;
-    const isExhausted = pct >= 100;
-    const isWarning = pct >= threshold;
-
-    if (isExhausted) {
-      this.handleExhausted(cache);
-      return;
-    }
-
-    if (isWarning) {
-      if (enableBlink) this.startBlink();
-      if (enablePopup) this.showWarningPopup(cache, pct);
+    switch (state) {
+      case QuotaState.FullyExhausted:
+        this.handleExhausted(cache, enablePopup);
+        break;
+      case QuotaState.OnDemandWarning:
+        this.handleOnDemandWarning(cache, enableBlink, enablePopup);
+        break;
+      case QuotaState.RequestsDepleted:
+        this.handleRequestsDepleted(cache, enablePopup);
+        break;
+      case QuotaState.PlanWarning:
+        if (enableBlink) this.startBlink();
+        if (enablePopup) this.showPlanWarningPopup(cache);
+        break;
+      default:
+        this.stopBlink();
     }
   }
 
@@ -58,11 +80,6 @@ export class AlertManager {
     if (this.statusBar) {
       this.statusBar.backgroundColor = undefined;
     }
-  }
-
-  isExhausted(cache: UsageCache | null): boolean {
-    if (!cache || cache.total <= 0) return false;
-    return cache.used >= cache.total;
   }
 
   dispose(): void {
@@ -83,26 +100,47 @@ export class AlertManager {
     this.blinkStopTimer = setTimeout(() => this.stopBlink(), BLINK_DURATION_MS);
   }
 
-  private handleExhausted(cache: UsageCache): void {
+  private handleExhausted(cache: UsageCache, enablePopup: boolean): void {
     this.stopBlink();
     if (this.statusBar) {
       this.statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
     }
-
-    const config = vscode.workspace.getConfiguration('cursorQuota');
-    if (config.get<boolean>('enablePopupAlert', true)) {
+    if (enablePopup) {
       this.showExhaustedPopup(cache);
     }
   }
 
-  private async showWarningPopup(cache: UsageCache, pct: number): Promise<void> {
-    if (this.isSuppressed(cache.billingCycleEnd)) return;
-    if (this.isAlreadyAlerted(cache.billingCycleEnd)) return;
+  private handleRequestsDepleted(cache: UsageCache, enablePopup: boolean): void {
+    this.stopBlink();
+    if (this.statusBar) {
+      this.statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    }
+    if (enablePopup) {
+      this.showRequestsDepletedPopup(cache);
+    }
+  }
 
-    this.markAlerted(cache.billingCycleEnd);
+  private handleOnDemandWarning(cache: UsageCache, enableBlink: boolean, enablePopup: boolean): void {
+    this.stopBlink();
+    if (this.statusBar) {
+      this.statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    }
+    if (enableBlink) this.startBlink();
+    if (enablePopup) this.showOnDemandWarningPopup(cache);
+  }
 
+  // --- popups (each type has independent alert/suppress state) ---
+
+  private async showPlanWarningPopup(cache: UsageCache): Promise<void> {
+    const tag = 'warning';
+    if (this.isSuppressed(cache.billingCycleEnd, tag)) return;
+    if (this.isAlreadyAlerted(cache.billingCycleEnd, tag)) return;
+
+    this.markAlerted(cache.billingCycleEnd, tag);
+
+    const pct = Math.round((cache.used / cache.total) * 100);
     const selection = await vscode.window.showWarningMessage(
-      `${t('warningTitle')}: ${t('warningMsg', Math.round(pct), cache.used, cache.total)}`,
+      `${t('warningTitle')}: ${t('warningMsg', pct, cache.used, cache.total)}`,
       t('openPanel'),
       t('dismissCycle'),
     );
@@ -110,15 +148,58 @@ export class AlertManager {
     if (selection === t('openPanel')) {
       vscode.commands.executeCommand('cursorQuota.openDashboard');
     } else if (selection === t('dismissCycle')) {
-      this.suppressUntil(cache.billingCycleEnd);
+      this.suppressUntil(cache.billingCycleEnd, tag);
+    }
+  }
+
+  private async showRequestsDepletedPopup(cache: UsageCache): Promise<void> {
+    const tag = 'depleted';
+    if (this.isSuppressed(cache.billingCycleEnd, tag)) return;
+    if (this.isAlreadyAlerted(cache.billingCycleEnd, tag)) return;
+
+    this.markAlerted(cache.billingCycleEnd, tag);
+
+    const remaining = Math.max(cache.onDemandLimit - cache.onDemandUsed, 0).toFixed(2);
+    const selection = await vscode.window.showWarningMessage(
+      t('requestsDepletedMsg', remaining),
+      t('openPanel'),
+      t('dismissCycle'),
+    );
+
+    if (selection === t('openPanel')) {
+      vscode.commands.executeCommand('cursorQuota.openDashboard');
+    } else if (selection === t('dismissCycle')) {
+      this.suppressUntil(cache.billingCycleEnd, tag);
+    }
+  }
+
+  private async showOnDemandWarningPopup(cache: UsageCache): Promise<void> {
+    const tag = 'od_warning';
+    if (this.isSuppressed(cache.billingCycleEnd, tag)) return;
+    if (this.isAlreadyAlerted(cache.billingCycleEnd, tag)) return;
+
+    this.markAlerted(cache.billingCycleEnd, tag);
+
+    const odPct = Math.round((cache.onDemandUsed / cache.onDemandLimit) * 100);
+    const selection = await vscode.window.showWarningMessage(
+      `${t('warningTitle')}: ${t('onDemandWarningMsg', odPct, cache.onDemandUsed.toFixed(0), cache.onDemandLimit.toFixed(0))}`,
+      t('openPanel'),
+      t('dismissCycle'),
+    );
+
+    if (selection === t('openPanel')) {
+      vscode.commands.executeCommand('cursorQuota.openDashboard');
+    } else if (selection === t('dismissCycle')) {
+      this.suppressUntil(cache.billingCycleEnd, tag);
     }
   }
 
   private async showExhaustedPopup(cache: UsageCache): Promise<void> {
-    if (this.isSuppressed(cache.billingCycleEnd)) return;
-    if (this.isAlreadyAlerted(cache.billingCycleEnd + '_exhausted')) return;
+    const tag = 'exhausted';
+    if (this.isSuppressed(cache.billingCycleEnd, tag)) return;
+    if (this.isAlreadyAlerted(cache.billingCycleEnd, tag)) return;
 
-    this.markAlerted(cache.billingCycleEnd + '_exhausted');
+    this.markAlerted(cache.billingCycleEnd, tag);
 
     const selection = await vscode.window.showErrorMessage(
       t('exhaustedMsg'),
@@ -129,23 +210,33 @@ export class AlertManager {
     if (selection === t('openPanel')) {
       vscode.commands.executeCommand('cursorQuota.openDashboard');
     } else if (selection === t('dismissCycle')) {
-      this.suppressUntil(cache.billingCycleEnd);
+      this.suppressUntil(cache.billingCycleEnd, tag);
     }
   }
 
-  private isAlreadyAlerted(key: string): boolean {
-    return this.context.globalState.get<string>(ALERT_STATE_KEY) === key;
+  // --- state persistence (per-alert-type) ---
+
+  private stateKey(tag: string): string {
+    return `${ALERT_STATE_KEY}:${tag}`;
   }
 
-  private async markAlerted(key: string): Promise<void> {
-    await this.context.globalState.update(ALERT_STATE_KEY, key);
+  private suppressKey(tag: string): string {
+    return `${SUPPRESS_KEY}:${tag}`;
   }
 
-  private isSuppressed(cycleEnd: string): boolean {
-    return this.context.globalState.get<string>(SUPPRESS_KEY) === cycleEnd;
+  private isAlreadyAlerted(cycleEnd: string, tag: string): boolean {
+    return this.context.globalState.get<string>(this.stateKey(tag)) === cycleEnd;
   }
 
-  private async suppressUntil(cycleEnd: string): Promise<void> {
-    await this.context.globalState.update(SUPPRESS_KEY, cycleEnd);
+  private async markAlerted(cycleEnd: string, tag: string): Promise<void> {
+    await this.context.globalState.update(this.stateKey(tag), cycleEnd);
+  }
+
+  private isSuppressed(cycleEnd: string, tag: string): boolean {
+    return this.context.globalState.get<string>(this.suppressKey(tag)) === cycleEnd;
+  }
+
+  private async suppressUntil(cycleEnd: string, tag: string): Promise<void> {
+    await this.context.globalState.update(this.suppressKey(tag), cycleEnd);
   }
 }

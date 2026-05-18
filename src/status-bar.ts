@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { UsageCache, ModelState } from './types';
+import { UsageCache, ModelState, QuotaState } from './types';
 import { TooltipBuilder } from './tooltip-builder';
 import { UsageHistory } from './usage-history';
 import { AlertManager } from './alert-manager';
@@ -73,8 +73,9 @@ export class StatusBarManager {
       return;
     }
 
-    this.renderText(cache, model);
-    this.renderBackground(cache, model);
+    const quotaState = this.alertManager.getQuotaState(cache);
+    this.renderText(cache, model, quotaState);
+    this.renderBackground(model, quotaState);
     this.renderTooltip(cache, model, isOffline);
   }
 
@@ -86,25 +87,30 @@ export class StatusBarManager {
     this.statusBar.dispose();
   }
 
-  private renderText(cache: UsageCache, model: ModelState | null): void {
+  private renderText(cache: UsageCache, model: ModelState | null, state: QuotaState): void {
     const isHighCost = model?.isHighCost ?? false;
-    const isExhausted = this.alertManager.isExhausted(cache);
+    const planDepleted = state === QuotaState.RequestsDepleted
+      || state === QuotaState.OnDemandWarning
+      || state === QuotaState.FullyExhausted;
 
     let usageText: string;
-    const pct = cache.total > 0 ? (cache.used / cache.total) * 100 : 0;
-    if (pct >= 100 && cache.onDemandLimit > 0) {
+    if (planDepleted && cache.onDemandLimit > 0) {
       usageText = `$${cache.onDemandUsed.toFixed(0)}/$${cache.onDemandLimit.toFixed(0)}`;
     } else {
       usageText = `${cache.used}/${cache.total}`;
     }
 
     let icon: string;
-    if (isExhausted) {
-      icon = '$(warning)';
-    } else if (isHighCost) {
-      icon = '$(flame)';
-    } else {
-      icon = '$(zap)';
+    switch (state) {
+      case QuotaState.FullyExhausted:
+        icon = '$(error)';
+        break;
+      case QuotaState.OnDemandWarning:
+      case QuotaState.RequestsDepleted:
+        icon = '$(warning)';
+        break;
+      default:
+        icon = isHighCost ? '$(flame)' : '$(zap)';
     }
 
     let modelText = '';
@@ -119,16 +125,21 @@ export class StatusBarManager {
     this.statusBar.text = `${icon} ${usageText}${modelText}`;
   }
 
-  private renderBackground(cache: UsageCache, model: ModelState | null): void {
-    const isExhausted = this.alertManager.isExhausted(cache);
+  private renderBackground(model: ModelState | null, state: QuotaState): void {
     const isHighCost = model?.isHighCost ?? false;
 
-    if (isExhausted) {
-      this.statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    } else if (isHighCost) {
-      this.statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-      this.statusBar.backgroundColor = undefined;
+    switch (state) {
+      case QuotaState.FullyExhausted:
+        this.statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+        break;
+      case QuotaState.OnDemandWarning:
+      case QuotaState.RequestsDepleted:
+        this.statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        break;
+      default:
+        this.statusBar.backgroundColor = isHighCost
+          ? new vscode.ThemeColor('statusBarItem.warningBackground')
+          : undefined;
     }
   }
 
