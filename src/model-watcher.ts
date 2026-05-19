@@ -100,14 +100,30 @@ export class ModelWatcher {
     const aiSettings = parsed.aiSettings as Record<string, unknown> | undefined;
     if (aiSettings) {
       const modelConfig = aiSettings.modelConfig as Record<string, Record<string, unknown>> | undefined;
-      const composerMc = modelConfig?.composer;
-      if (composerMc?.modelName) {
-        const mc = composerMc as unknown as ModelConfig;
-        // When "default" (Auto mode), resolve display name from hint fields
-        if (mc.modelName === 'default') {
-          mc.resolvedDisplayName = this.resolveAutoModelName(aiSettings);
+      if (modelConfig) {
+        const modeKeys = ['agent', 'composer'];
+        for (const key of modeKeys) {
+          const mcRaw = modelConfig[key];
+          if (mcRaw?.modelName) {
+            const mc = mcRaw as unknown as ModelConfig;
+            if (mc.modelName === 'default') {
+              mc.resolvedDisplayName = this.resolveAutoModelName(aiSettings);
+            }
+            return mc;
+          }
         }
-        return mc;
+
+        // 标准 key 未匹配，尝试 modelConfig 中第一个有 modelName 的 key
+        for (const key of Object.keys(modelConfig)) {
+          const mcRaw = modelConfig[key];
+          if (mcRaw?.modelName) {
+            const mc = mcRaw as unknown as ModelConfig;
+            if (mc.modelName === 'default') {
+              mc.resolvedDisplayName = this.resolveAutoModelName(aiSettings);
+            }
+            return mc;
+          }
+        }
       }
     }
 
@@ -115,11 +131,12 @@ export class ModelWatcher {
     const storage = parsed.storage as Record<string, unknown> | undefined;
     if (storage) {
       const composerJson = storage['aiSettings.modelConfig.composer']
+        ?? storage['aiSettings.modelConfig.agent']
         ?? (storage.aiSettings as Record<string, unknown>)?.modelConfig;
       if (composerJson) {
         const mc = typeof composerJson === 'string' ? JSON.parse(composerJson) : composerJson;
         if ((mc as Record<string, unknown>)?.modelName) return mc as ModelConfig;
-        const nested = (mc as Record<string, unknown>)?.composer;
+        const nested = (mc as Record<string, unknown>)?.composer ?? (mc as Record<string, unknown>)?.agent;
         if (nested && (nested as Record<string, unknown>).modelName) return nested as unknown as ModelConfig;
       }
     }

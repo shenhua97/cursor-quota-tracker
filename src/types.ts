@@ -6,13 +6,17 @@ export interface UsageCache {
   billingCycleStart: string;
   billingCycleEnd: string;
   lastUpdated: number;
+  todayRequests?: number;
+  last7DaysRequests?: number;
 }
 
 export interface DailySnapshot {
   date: string;
   cycleUsed: number;
   total: number;
+  billingCycleStart?: string;
   billingCycleEnd: string;
+  onDemandUsed?: number;
 }
 
 export interface ModelState {

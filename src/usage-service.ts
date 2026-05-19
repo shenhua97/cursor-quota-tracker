@@ -41,13 +41,42 @@ export class UsageService {
       const timeoutId = setTimeout(() => controller.abort(), 15_000);
       const fetchOpts = { headers, signal: controller.signal };
 
-      const [usageRes, summaryRes] = await Promise.all([
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const weekAgo = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      const eventsHeaders = { ...headers, 'Content-Type': 'application/json', Origin: API_BASE };
+
+      const [usageRes, summaryRes, eventsRes, weekEventsRes] = await Promise.all([
         fetch(`${API_BASE}/api/usage`, fetchOpts).catch((e) => {
           throw new FetchError(FetchErrorType.NETWORK, e.message);
         }),
         fetch(`${API_BASE}/api/usage-summary`, fetchOpts).catch((e) => {
           throw new FetchError(FetchErrorType.NETWORK, e.message);
         }),
+        fetch(`${API_BASE}/api/dashboard/get-filtered-usage-events`, {
+          method: 'POST',
+          headers: eventsHeaders,
+          signal: controller.signal,
+          body: JSON.stringify({
+            startDate: String(todayStart.getTime()),
+            endDate: String(todayEnd.getTime() - 1),
+            page: 1,
+            pageSize: 1,
+          }),
+        }).catch(() => null),
+        fetch(`${API_BASE}/api/dashboard/get-filtered-usage-events`, {
+          method: 'POST',
+          headers: eventsHeaders,
+          signal: controller.signal,
+          body: JSON.stringify({
+            startDate: String(weekAgo.getTime()),
+            endDate: String(todayEnd.getTime() - 1),
+            page: 1,
+            pageSize: 1,
+          }),
+        }).catch(() => null),
       ]).finally(() => clearTimeout(timeoutId));
 
       this.isOffline = false;
@@ -69,6 +98,8 @@ export class UsageService {
       let onDemandLimit = 0;
       let billingCycleStart = '';
       let billingCycleEnd = '';
+      let todayRequests: number | undefined;
+      let last7DaysRequests: number | undefined;
 
       if (usageRes.ok) {
         const data = (await usageRes.json()) as Record<string, unknown>;
@@ -95,9 +126,33 @@ export class UsageService {
         }
       }
 
+      if (eventsRes?.ok) {
+        try {
+          const eventsData = (await eventsRes.json()) as Record<string, unknown>;
+          if (typeof eventsData.totalUsageEventsCount === 'number') {
+            todayRequests = eventsData.totalUsageEventsCount;
+          }
+        } catch {
+          this.output.appendLine('[UsageService] Failed to parse events response');
+        }
+      }
+
+      if (weekEventsRes?.ok) {
+        try {
+          const weekData = (await weekEventsRes.json()) as Record<string, unknown>;
+          if (typeof weekData.totalUsageEventsCount === 'number') {
+            last7DaysRequests = weekData.totalUsageEventsCount;
+          }
+        } catch {
+          this.output.appendLine('[UsageService] Failed to parse week events response');
+        }
+      }
+
       this.cache = {
         used, total, onDemandUsed, onDemandLimit, billingCycleStart, billingCycleEnd,
         lastUpdated: Date.now(),
+        todayRequests,
+        last7DaysRequests,
       };
       await this.context.globalState.update('usageCache', this.cache);
       return this.cache;

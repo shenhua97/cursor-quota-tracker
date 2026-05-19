@@ -35,7 +35,7 @@ export class StatusBarManager {
   }
 
   showLoading(): void {
-    this.statusBar.text = '$(loading~spin) Cursor Quota';
+    this.statusBar.text = `$(loading~spin) ${t('title')}`;
     this.statusBar.tooltip = this.tooltipBuilder.buildLoading();
     this.statusBar.backgroundColor = undefined;
   }
@@ -77,10 +77,6 @@ export class StatusBarManager {
     this.renderText(cache, model, quotaState);
     this.renderBackground(model, quotaState);
     this.renderTooltip(cache, model, isOffline);
-  }
-
-  getStatusBarItem(): vscode.StatusBarItem {
-    return this.statusBar;
   }
 
   dispose(): void {
@@ -147,10 +143,7 @@ export class StatusBarManager {
     const todayUsage = this.usageHistory.getTodayUsage(cache);
     const prediction = this.usageHistory.getPrediction(cache);
     const sparkLine = this.usageHistory.getSparkLine();
-    const { dailyUsages } = this.usageHistory.getWeeklyData();
-    const dailyAvg = dailyUsages.length > 0
-      ? Math.round(dailyUsages.reduce((a, b) => a + b, 0) / dailyUsages.length)
-      : 0;
+    const dailyAvg = Math.round(this.usageHistory.getDailyAverage(cache));
 
     this.statusBar.tooltip = this.tooltipBuilder.build({
       cache,

@@ -23,6 +23,8 @@ let lastManualRefresh = 0;
 let focusListening = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshing = false;
+let wasMaxMode = false;
+let maxAlertTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getRefreshIntervalSec(): number {
   return Math.max(60, vscode.workspace.getConfiguration('cursorQuota').get<number>('refreshInterval') ?? 300);
@@ -52,6 +54,7 @@ export function activate(context: vscode.ExtensionContext): void {
     modelWatcher.onDidChange(() => {
       const cache = usageService.getCache();
       statusBarManager.render(cache, modelWatcher.state, usageService.getIsOffline());
+      checkMaxModeAlert();
     });
 
     initAuth(context);
@@ -60,6 +63,7 @@ export function activate(context: vscode.ExtensionContext): void {
       dispose: () => {
         if (pollTimer) clearInterval(pollTimer);
         if (retryTimer) clearTimeout(retryTimer);
+        if (maxAlertTimer) clearTimeout(maxAlertTimer);
         modelWatcher.dispose();
         alertManager.dispose();
         statusBarManager.dispose();
@@ -79,7 +83,7 @@ export function deactivate(): void {
 async function initAuth(context: vscode.ExtensionContext): Promise<void> {
   const token = await authService.getToken();
   if (token) {
-    startPolling(context);
+    startPolling();
     modelWatcher.start();
     listenFocus(context);
   } else {
@@ -87,10 +91,45 @@ async function initAuth(context: vscode.ExtensionContext): Promise<void> {
   }
 }
 
-function startPolling(context: vscode.ExtensionContext): void {
+function startPolling(): void {
   if (pollTimer) clearInterval(pollTimer);
   doRefresh();
   pollTimer = setInterval(() => doRefresh(), getRefreshIntervalSec() * 1000);
+}
+
+function showMaxAlert(label: string): void {
+  if (maxAlertTimer) clearTimeout(maxAlertTimer);
+  maxAlertTimer = setTimeout(() => {
+    maxAlertTimer = null;
+    vscode.window.showWarningMessage(
+      `⚠️ ${t('highCostModeAlert', label)}`,
+      t('openPanel'),
+    ).then((sel) => {
+      if (sel === t('openPanel')) {
+        vscode.commands.executeCommand('cursorQuota.openDashboard');
+      }
+    });
+  }, 1500);
+}
+
+function checkMaxModeAlert(): void {
+  const state = modelWatcher.state;
+  const isMax = !!state?.maxMode;
+
+  if (!isMax) {
+    wasMaxMode = false;
+    return;
+  }
+
+  // 仅在 非MAX → MAX 转换时弹窗，避免重复
+  if (wasMaxMode) return;
+  wasMaxMode = true;
+
+  const enablePopup = vscode.workspace.getConfiguration('cursorQuota')
+    .get<boolean>('enablePopupAlert', true);
+  if (!enablePopup) return;
+
+  showMaxAlert(state.costLabel);
 }
 
 async function doRefresh(): Promise<void> {
@@ -101,13 +140,15 @@ async function doRefresh(): Promise<void> {
     await usageHistory.record(cache);
     alertManager.check(cache);
     statusBarManager.render(cache, modelWatcher.state, false);
+    checkMaxModeAlert();
     authService.resetRetryCount();
   } catch (err) {
     if (err instanceof FetchError) {
       switch (err.type) {
         case FetchErrorType.AUTH_401:
+          refreshing = false;
           await handleAuth401();
-          break;
+          return;
         case FetchErrorType.NETWORK:
           statusBarManager.render(usageService.getCache(), modelWatcher.state, true);
           pausePolling();
@@ -125,15 +166,17 @@ async function doRefresh(): Promise<void> {
 
 async function handleAuth401(): Promise<void> {
   const result = await authService.handleAuthFailure();
-  if (!result.shouldRetry || authService.isMaxRetriesExceeded()) {
+  if (!result.shouldRetry) {
     statusBarManager.showAuthError();
+    pausePolling();
     return;
   }
 
+  if (retryTimer) clearTimeout(retryTimer);
   if (result.delayMs > 0) {
     retryTimer = setTimeout(() => doRefresh(), result.delayMs);
   } else {
-    doRefresh();
+    setTimeout(() => doRefresh(), 0);
   }
 }
 
@@ -227,7 +270,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
       const token = await authService.promptManualInput();
       if (token) {
         if (!pollTimer) {
-          startPolling(context);
+          startPolling();
           modelWatcher.start();
           listenFocus(context);
         } else {
@@ -236,8 +279,11 @@ function registerCommands(context: vscode.ExtensionContext): void {
       }
     }),
 
-    vscode.commands.registerCommand('cursorQuota.clearToken', () => {
-      authService.clearToken();
+    vscode.commands.registerCommand('cursorQuota.clearToken', async () => {
+      await authService.clearToken();
+      pausePolling();
+      modelWatcher.dispose();
+      statusBarManager.showSetupRequired();
     }),
   );
 }

@@ -10,9 +10,10 @@ Real-time Cursor AI usage quota monitoring in the editor status bar. Zero config
 - **Status Bar Display** — Shows used/total in the bottom-right (e.g., `⚡ 91/500`), switches to on-demand balance when quota exhausted (e.g., `⚠ $50/$120`)
 - **Rich Hover Tooltip** — Progress bars, remaining quota, reset countdown, today's usage, on-demand billing details
 - **Usage Trends** — Daily tracking, 7-day Spark Line, "X days remaining at current pace" prediction
-- **Instant Prediction** — Works from first install using billing cycle elapsed days, no data accumulation needed
+- **Precise 7-day Average** — Queries exact 7-day request count via API, accurate from first install without local data accumulation
+- **Smart Prediction** — Shows "Sufficient for cycle" when plan is active; predicts remaining days based on actual on-demand cost burn rate when plan is exhausted
 - **Smart Alerts** — Configurable threshold (default 80%), background blink + popup warning, once per cycle
-- **MAX Mode Detection** — Detects MAX/Thinking modes, prominent status bar indicator
+- **MAX Mode Detection** — Detects MAX/Thinking modes, prominent status bar indicator + popup alert on MAX activation
 - **Manual Refresh** — Click status bar for quick menu, or use command palette (30s cooldown)
 - **Offline Handling** — Auto-pauses polling when offline with offline icon, retries on reconnect
 - **In-extension Settings** — Interactive QuickPick settings panel, boolean toggles, no Settings UI navigation needed
@@ -80,10 +81,11 @@ Click status bar → Settings to modify interactively:
 ## Architecture
 
 - **Auth**: Extracts accessToken from `state.vscdb`, parses JWT payload for userId to assemble Cookie, SecretStorage encrypted cache, JWT expiry detection + exponential backoff retry
-- **Data**: `cursor.com/api/usage` + `/api/usage-summary`
+- **Data**: `cursor.com/api/usage` + `/api/usage-summary` + `/api/dashboard/get-filtered-usage-events` (today & 7-day request counts)
 - **DB Access**: Three-tier strategy — prefers Cursor's bundled `@vscode/sqlite3` native module (real-time WAL-aware), falls back to sql.js WASM in-memory, macOS/Linux also supports sqlite3 CLI
 - **Model Detection**: 5s polling of `state.vscdb` reactive storage for real-time model switch, MAX/Thinking mode changes
-- **Prediction**: Prefers daily snapshot diffs; falls back to `used / billing cycle elapsed days`
+- **Daily Average**: Three-tier strategy — ① API's exact 7-day count ÷ 7 → ② local snapshot diffs → ③ cycle total ÷ elapsed days
+- **Prediction**: Plan active → "Sufficient"; Plan exhausted → estimates on-demand elapsed days → daily cost = spend ÷ days → remaining budget ÷ daily cost
 - **Network**: 15s AbortController timeout, auto-pause polling offline + resume on window focus
 - **Build**: TypeScript + esbuild
 

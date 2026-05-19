@@ -12,7 +12,6 @@ export class AuthService {
   private dbReader: DbReader;
   private output: vscode.OutputChannel;
   private retryCount = 0;
-  private lastFailedToken: string | null = null;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -83,38 +82,20 @@ export class AuthService {
 
     const token = await this.autoDetect();
     if (token) {
-      if (token === this.lastFailedToken) {
-        this.output.appendLine('[Auth] Same token from DB, trying CLI fallback');
-        const cliToken = await this.autoDetectViaCli();
-        if (cliToken && cliToken !== this.lastFailedToken) {
-          await this.secretStorage.store(SECRET_KEY, cliToken);
-          this.lastFailedToken = null;
-          return { shouldRetry: true, delayMs: delay };
-        }
-      } else {
-        await this.secretStorage.store(SECRET_KEY, token);
-        this.lastFailedToken = null;
-        return { shouldRetry: true, delayMs: delay };
-      }
+      await this.secretStorage.store(SECRET_KEY, token);
+      return { shouldRetry: true, delayMs: delay };
     }
 
-    this.lastFailedToken = token;
     return { shouldRetry: true, delayMs: delay };
   }
 
   resetRetryCount(): void {
     this.retryCount = 0;
-    this.lastFailedToken = null;
-  }
-
-  isMaxRetriesExceeded(): boolean {
-    return this.retryCount >= BACKOFF_DELAYS.length;
   }
 
   async clearToken(): Promise<void> {
     await this.secretStorage.delete(SECRET_KEY);
     this.retryCount = 0;
-    this.lastFailedToken = null;
     vscode.window.showInformationMessage(t('tokenCleared'));
   }
 

@@ -101,12 +101,19 @@ export class TooltipBuilder {
       } else if (prediction.cycleSufficient) {
         md.appendMarkdown(`$(rocket) **${t('prediction')}**: ${t('cycleSufficient')}\n\n`);
       } else if (prediction.estimatedDaysLeft !== null) {
-        md.appendMarkdown(`$(rocket) **${t('prediction')}**: ${t('estimatedDays', prediction.estimatedDaysLeft)}\n\n`);
+        if (prediction.estimatedDaysLeft <= 0) {
+          md.appendMarkdown(`$(rocket) **${t('prediction')}**: ${t('estimatedLessThanOneDay')}\n\n`);
+        } else {
+          md.appendMarkdown(`$(rocket) **${t('prediction')}**: ${t('estimatedDays', prediction.estimatedDaysLeft)}\n\n`);
+        }
+      } else {
+        md.appendMarkdown(`$(rocket) **${t('prediction')}**: ${t('dataAccumulating')}\n\n`);
       }
     }
 
-    if (sparkLine) {
-      md.appendMarkdown(`$(graph) **${t('weeklyTrend')}**: ${sparkLine} (${t('dailyAvg', dailyAvg)})\n\n`);
+    if (dailyAvg > 0) {
+      const trendPart = sparkLine ? `${sparkLine} ` : '';
+      md.appendMarkdown(`$(graph) **${t('weeklyTrend')}**: ${trendPart}(${t('dailyAvg', dailyAvg)})\n\n`);
     }
 
     md.appendMarkdown(`$(clock) **${t('updated')}**: ${this.timeAgo(cache.lastUpdated)}\n\n`);
